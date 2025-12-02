@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
-from typing import Literal, Optional, TypedDict
+from typing import Literal, Optional, Annotated, TypedDict
 
 from langchain.messages import ToolCall
 
@@ -23,6 +23,9 @@ class AgentWorkflowState(TypedDict):
     _preferences: Optional[PreferencesNodeOutput]
     _provide_weather_forecast: Optional[list[OpenWeatherForecastResponse]]
     _provide_theaters_information: Optional[list[TheaterMetadata]]
+
+    # attribute for content reduction
+    _reduction_state: Annotated[dict, lambda left, right: left | right]
 
 class PreferencesNodeOutput(BaseModel):
     """Model that handles user preferences model extracted from LLM"""

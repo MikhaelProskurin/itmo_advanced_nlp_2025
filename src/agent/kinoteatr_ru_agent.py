@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from dotenv import find_dotenv, load_dotenv
 
 from datetime import datetime
@@ -80,6 +81,7 @@ class KinoteatrRuAgent:
         )
         self.graph.add_node("router_node", self.router_node, retry_policy=rp)
         self.graph.add_node("executor_node", self.executor_node, retry_policy=rp)
+        self.graph.add_node("parallel_branching_node", self.parallel_branching_node)
 
         self.graph.add_node(
             "weather_summarization_node",
@@ -99,6 +101,7 @@ class KinoteatrRuAgent:
         self.graph.add_node(
             "summarization_node",
             self.summarization_node,
+            defer=True,
             retry_policy=rp
         )
 
@@ -108,14 +111,15 @@ class KinoteatrRuAgent:
             "router_node", 
             self.check_graph_routing, 
             {
-                "summarization": "weather_summarization_node",
+                "summarization": "parallel_branching_node",
                 "use_tools": "executor_node"
             }
         )
         self.graph.add_edge("executor_node", "router_node")
-
-        self.graph.add_edge("weather_summarization_node", "theater_suggestion_node")
+        self.graph.add_edge("parallel_branching_node", "weather_summarization_node")
+        self.graph.add_edge("parallel_branching_node", "theater_suggestion_node")
         self.graph.add_edge("theater_suggestion_node", "movies_suggestion_node")
+        self.graph.add_edge("weather_summarization_node", "summarization_node")
         self.graph.add_edge("movies_suggestion_node", "summarization_node")
         self.graph.add_edge("summarization_node", END)
 
@@ -124,6 +128,10 @@ class KinoteatrRuAgent:
     def check_graph_routing(self, state: AgentWorkflowState) -> AgentWorkflowState:
         """Re-Act cycle verificator for routing node."""
         return state["_routing"].routing_decision
+        
+    def parallel_branching_node(self, state: AgentWorkflowState) -> AgentWorkflowState:
+        """Fake node for parallel graph routing"""
+        return state
         
     async def router_node(self, state: AgentWorkflowState) -> AgentWorkflowState:
         """
@@ -185,13 +193,16 @@ class KinoteatrRuAgent:
         Processes each requested tool asynchronously, collecting results for downstream use.
         """
 
-        results = {}
-        for call in state["_routing"].tool_calls:
+        named_coroutines = {
+            call["name"]: self.tools[call["name"]].ainvoke(call["args"]) for call in state["_routing"].tool_calls
+        }
 
-            tool_result = await self.tools[call["name"]].ainvoke(call["args"])
-            results[f"_{call['name']}"] = tool_result
-        
-        return results
+        tool_calling_result = await asyncio.gather(*named_coroutines.values())
+
+        result = {
+            f"_{name}": call_result for name, call_result in zip(named_coroutines.keys(), tool_calling_result)
+        }
+        return result
 
     async def weather_summarization_node(self, state: AgentWorkflowState) -> AgentWorkflowState:
         """A node that summarizes weather forecast data"""
