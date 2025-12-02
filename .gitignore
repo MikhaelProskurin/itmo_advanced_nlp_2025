@@ -1,5 +1,4 @@
 .venv
 .env
-requirements.txt
 docker-compose.yaml
 __pycache__
