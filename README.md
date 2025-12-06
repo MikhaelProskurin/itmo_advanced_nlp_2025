@@ -9,6 +9,21 @@
 *   **Цель** -> Повысить конверсию от посещений платформы **kinoteatr.ru**, через предоставление AI-рекомендаций и персональное планирование.
 *   **Функционал** -> geocoding-api, weather-summary, cinema-suggestion, movie-suggestion.
 
+```
+root/
+│
+├── src/
+│   ├── agent/          # Бизнес-логика агента и инструкции к LLM
+│   ├── models/         # Модели LLM structured output и external-api
+│   ├── tools/          # Инструменты, интегрируемые в агента
+│   ├── utils/          # Вспомогательные функции
+│   ├── example.ipynb
+│   └── app.py
+│
+├── requirements.txt
+└── README.md
+```
+
 ## Usage
 
 ### Core requirements
