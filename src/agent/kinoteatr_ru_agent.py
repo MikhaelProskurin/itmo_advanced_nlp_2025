@@ -3,16 +3,20 @@ import logging
 import asyncio
 from dotenv import find_dotenv, load_dotenv
 
+from typing import Union
 from datetime import datetime
+
+from pydantic import BaseModel
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import RetryPolicy
 
 from langchain_openai import ChatOpenAI
-
+from langchain_core.runnables import RunnableConfig
 from langchain.messages import SystemMessage, HumanMessage
 from langchain_core.output_parsers import PydanticOutputParser, StrOutputParser
+from langchain_core.exceptions import OutputParserException
 
 from agent.prompt_storage import NodesPromptStorage
 
@@ -125,6 +129,33 @@ class KinoteatrRuAgent:
 
         return self.graph.compile()
     
+    @staticmethod
+    async def parse_with_fallback(
+            llm: ChatOpenAI,
+            parser: Union[StrOutputParser, PydanticOutputParser], 
+            node_prompt: list[SystemMessage | HumanMessage],
+            max_attempts: int = 3,
+            fallback_temperature: float = 0.1
+        ) -> Union[BaseModel, str]:
+        """
+        Attempts to parse LLM output with a given parser, retrying with adjusted temperature on failure.
+        Returns the parsed result or raises the final OutputParserException after max_attempts.
+        """
+        
+        fallback_config = RunnableConfig(configurable={"temperature": fallback_temperature})
+        fallback_llm = llm.with_config(config=fallback_config)
+        
+        model_response = await llm.ainvoke(node_prompt)
+
+        for attempt in range(max_attempts):
+            try:
+                return parser.parse(model_response.content)
+            
+            except OutputParserException as ex:
+                model_response = await fallback_llm.ainvoke(node_prompt)
+        else:
+            raise ex
+    
     def check_graph_routing(self, state: AgentWorkflowState) -> AgentWorkflowState:
         """Re-Act cycle verificator for routing node."""
         return state["_routing"].routing_decision
@@ -156,8 +187,11 @@ class KinoteatrRuAgent:
             HumanMessage(content=state["question"])
         ]
 
-        model_response = await self.llm_with_tools.ainvoke(node_prompt)
-        routing = parser.parse(model_response.content)
+        routing = await self.parse_with_fallback(
+            llm=self.llm_with_tools,
+            parser=parser,
+            node_prompt=node_prompt
+        )
 
         return {"_routing": routing}
 
@@ -182,8 +216,11 @@ class KinoteatrRuAgent:
             HumanMessage(content=state["question"])
         ]
 
-        model_response = await self.llm.ainvoke(node_prompt)
-        preferences = parser.parse(model_response.content)
+        preferences = await self.parse_with_fallback(
+            llm=self.llm,
+            parser=parser,
+            node_prompt=node_prompt
+        )
 
         return {"_preferences": preferences}
     
@@ -214,9 +251,13 @@ class KinoteatrRuAgent:
         )
         node_prompt = [SystemMessage(content=system_prompt)]
 
-        model_response = await self.llm.ainvoke(node_prompt)
+        parsed_response = await self.parse_with_fallback(
+            llm=self.llm,
+            parser=StrOutputParser(),
+            node_prompt=node_prompt
+        )
 
-        return {"weather_summary": StrOutputParser().parse(model_response.content)}
+        return {"weather_summary": parsed_response}
     
     async def theater_suggestion_node(self, state: AgentWorkflowState) -> AgentWorkflowState:
         """
@@ -239,9 +280,13 @@ class KinoteatrRuAgent:
 
         theater_suggestion_prompt = [SystemMessage(content=prompt_content)]
 
-        model_response = await self.llm.ainvoke(theater_suggestion_prompt)
+        parsed_response = await self.parse_with_fallback(
+            llm=self.llm,
+            parser=parser,
+            node_prompt=theater_suggestion_prompt
+        )
 
-        return {"suggested_theater": parser.parse(model_response.content)}
+        return {"suggested_theater": parsed_response}
 
     async def movies_suggestion_node(self, state: AgentWorkflowState) -> AgentWorkflowState:
         """
@@ -278,9 +323,13 @@ class KinoteatrRuAgent:
         )
         node_prompt = [SystemMessage(content=system_prompt)]
 
-        model_response = await self.llm.ainvoke(node_prompt)
+        parsed_response = await self.parse_with_fallback(
+            llm=self.llm,
+            parser=StrOutputParser(),
+            node_prompt=node_prompt
+        )
 
-        return {"suggested_schedule": StrOutputParser().parse(model_response.content)}
+        return {"suggested_schedule": parsed_response}
 
     async def summarization_node(self, state: AgentWorkflowState) -> AgentWorkflowState:
         """
@@ -298,6 +347,10 @@ class KinoteatrRuAgent:
         )
         summarization_prompt = [SystemMessage(content=prompt_content)]
 
-        model_response = await self.llm.ainvoke(summarization_prompt)
+        parsed_response = await self.parse_with_fallback(
+            llm=self.llm,
+            parser=StrOutputParser(),
+            node_prompt=summarization_prompt
+        )
         
-        return {"answer": StrOutputParser().parse(model_response.content)}
+        return {"answer": parsed_response}
